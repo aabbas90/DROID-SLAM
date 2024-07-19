@@ -18,10 +18,11 @@ CAM_POINTS = np.array([
         [-1,   1, 1.5],
         [-0.5, 1, 1.5],
         [ 0.5, 1, 1.5],
-        [ 0, 1.2, 1.5]])
+        [ 0, 1.2, 1.5],
+        [0, 0, -100]])
 
 CAM_LINES = np.array([
-    [1,2], [2,3], [3,4], [4,1], [1,0], [0,2], [3,0], [0,4], [5,7], [7,6]])
+    [1,2], [2,3], [3,4], [4,1], [1,0], [0,2], [3,0], [0,4], [5,7], [7,6], [0, 8]])
 
 def white_balance(img):
     # from https://stackoverflow.com/questions/46390779/automatic-white-balancing-with-grayworld-assumption
@@ -74,7 +75,7 @@ def droid_visualization(video, device="cuda:0"):
             droid_visualization.video.dirty[:droid_visualization.video.counter.value] = True
 
     def animation_callback(vis):
-        cam = vis.get_view_control().convert_to_pinhole_camera_parameters()
+        cam_parameters = vis.get_view_control().convert_to_pinhole_camera_parameters()
 
         with torch.no_grad():
 
@@ -90,6 +91,7 @@ def droid_visualization(video, device="cuda:0"):
 
             # convert poses to 4x4 matrix
             poses = torch.index_select(video.poses, 0, dirty_index)
+            # poses = pops.project_rcm(poses)
             disps = torch.index_select(video.disps, 0, dirty_index)
             Ps = SE3(poses).inv().matrix().cpu().numpy()
 
@@ -106,6 +108,7 @@ def droid_visualization(video, device="cuda:0"):
             disps = disps.cpu()
             masks = ((count >= 2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
             
+            lines = []
             for i in range(len(dirty_index)):
                 pose = Ps[i]
                 ix = dirty_index[i].item()
@@ -133,9 +136,46 @@ def droid_visualization(video, device="cuda:0"):
                 vis.add_geometry(point_actor)
                 droid_visualization.points[ix] = point_actor
 
+            # rcm = pops.find_rcm(poses).unsqueeze(0).unsqueeze(-1)
+            # PM = SE3(poses).matrix()
+            # PM_inv = SE3(poses).inv().matrix()
+
+            # original_centers = -torch.matmul(PM_inv[:, :3, :3], PM[:, :3, 3:4])
+            # new_centers = original_centers - rcm
+            # new_translation = -torch.matmul(PM[:, :3, :3], new_centers)
+            # # print(f'new_translation: {new_translation.shape} \n {new_translation}')
+            # # set x and y translation to 0.
+            # # new_translation[:, :2, :] = 0
+
+            # PM[:, :3, 3:4] = -torch.matmul(PM[:, :3, :3], -torch.matmul(PM_inv[:, :3, :3], new_translation) + rcm)
+            # # PM[:, :3, 3:4] = new_translation
+            # Ps_rcm = torch.linalg.inv(PM)
+            # for i in range(len(dirty_index)):
+            #     pose = Ps_rcm[i]
+            #     ix = f'{dirty_index[i].item()}_rcm'
+
+            #     if ix in droid_visualization.cameras:
+            #         vis.remove_geometry(droid_visualization.cameras[ix])
+            #         del droid_visualization.cameras[ix]
+
+            #     ### add camera actor ###
+            #     cam_actor = create_camera_actor(False)
+            #     cam_actor.transform(pose.cpu().numpy())
+            #     vis.add_geometry(cam_actor)
+            #     droid_visualization.cameras[ix] = cam_actor
+
+            # if 'rcm' in droid_visualization.cameras:
+            #     vis.remove_geometry(droid_visualization.cameras['rcm'])
+            #     del droid_visualization.cameras['rcm']
+
+            # rcm_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(rcm.squeeze().cpu().numpy()[None, :]))
+            # vis.add_geometry(rcm_pcd)
+            # droid_visualization.cameras['rcm'] = rcm_pcd
+
             # hack to allow interacting with vizualization during inference
             if len(droid_visualization.cameras) >= droid_visualization.warmup:
-                cam = vis.get_view_control().convert_from_pinhole_camera_parameters(cam)
+                vis.get_view_control().convert_from_pinhole_camera_parameters(cam_parameters, True)
+                # cam = vis.get_view_control().convert_from_pinhole_camera_parameters(cam)
 
             droid_visualization.ix += 1
             vis.poll_events()
