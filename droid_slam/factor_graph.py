@@ -9,13 +9,14 @@ import geom.projective_ops as pops
 
 
 class FactorGraph:
-    def __init__(self, video, update_op, device="cuda:0", corr_impl="volume", max_factors=-1, upsample=False):
+    def __init__(self, video, update_op, device="cuda:0", corr_impl="volume", max_factors=-1, upsample=False, rcm_regularizer_strength=0.0):
         self.video = video
         self.update_op = update_op
         self.device = device
         self.max_factors = max_factors
         self.corr_impl = corr_impl
         self.upsample = upsample
+        self.rcm_regularizer_strength = rcm_regularizer_strength
 
         # operator at 1/8 resolution
         self.ht = ht = video.ht // 8
@@ -238,7 +239,8 @@ class FactorGraph:
 
             # dense bundle adjustment
             self.video.ba(target, weight, damping, ii, jj, t0, t1, 
-                itrs=itrs, lm=1e-4, ep=0.1, motion_only=motion_only)
+                itrs=itrs, lm=1e-4, ep=0.1, motion_only=motion_only,
+                rcm_regularizer_strength=self.rcm_regularizer_strength)
         
             if self.upsample:
                 self.video.upsample(torch.unique(self.ii), upmask)
@@ -291,7 +293,8 @@ class FactorGraph:
 
             # dense bundle adjustment
             self.video.ba(target, weight, damping, self.ii, self.jj, 1, t, 
-                itrs=itrs, lm=1e-5, ep=1e-2, motion_only=False)
+                itrs=itrs, lm=1e-5, ep=1e-2, motion_only=False,
+                rcm_regularizer_strength=self.rcm_regularizer_strength)
 
             self.video.dirty[:t] = True
 

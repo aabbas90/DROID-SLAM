@@ -7,7 +7,7 @@ from droid_net import DroidNet
 
 import geom.projective_ops as pops
 from modules.corr import CorrBlock
-
+import os
 
 class MotionFilter:
     """ This class is used to filter incoming frames and extract features """
@@ -42,10 +42,12 @@ class MotionFilter:
 
     @torch.cuda.amp.autocast(enabled=True)
     @torch.no_grad()
-    def track(self, tstamp, image, depth=None, intrinsics=None):
+    def track(self, tstamp, image, depth=None, intrinsics=None, stereo_rel_pose=None):
         """ main update operation - run on every frame in video """
 
         Id = lietorch.SE3.Identity(1,).data.squeeze()
+        if 'RCM' in os.environ:
+            Id[2] = -3.0 #-1.10 # -3.133
         ht = image.shape[-2] // 8
         wd = image.shape[-1] // 8
 
@@ -60,7 +62,7 @@ class MotionFilter:
         if self.video.counter.value == 0:
             net, inp = self.__context_encoder(inputs[:,[0]])
             self.net, self.inp, self.fmap = net, inp, gmap
-            self.video.append(tstamp, image[0], Id, 1.0, depth, intrinsics / 8.0, gmap, net[0,0], inp[0,0])
+            self.video.append(tstamp, image[0], Id, 1.0, depth, intrinsics / 8.0, gmap, net[0,0], inp[0,0], stereo_rel_pose)
 
         ### only add new frame if there is enough motion ###
         else:                
@@ -76,7 +78,7 @@ class MotionFilter:
                 self.count = 0
                 net, inp = self.__context_encoder(inputs[:,[0]])
                 self.net, self.inp, self.fmap = net, inp, gmap
-                self.video.append(tstamp, image[0], None, None, depth, intrinsics / 8.0, gmap, net[0], inp[0])
+                self.video.append(tstamp, image[0], None, None, depth, intrinsics / 8.0, gmap, net[0], inp[0], stereo_rel_pose)
 
             else:
                 self.count += 1

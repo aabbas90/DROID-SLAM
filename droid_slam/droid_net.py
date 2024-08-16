@@ -169,7 +169,7 @@ class DroidNet(nn.Module):
         return fmaps, net, inp
 
 
-    def forward(self, Gs, images, disps, intrinsics, graph=None, num_steps=12, fixedp=2):
+    def forward(self, Gs, images, disps, intrinsics, stereo_rel_pose, graph=None, num_steps=12, fixedp=2):
         """ Estimates SE3 or Sim3 between pair of frames """
 
         u = keyframe_indicies(graph)
@@ -185,7 +185,7 @@ class DroidNet(nn.Module):
         ht, wd = images.shape[-2:]
         coords0 = pops.coords_grid(ht//8, wd//8, device=images.device)
         
-        coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+        coords1, _ = pops.projective_transform(Gs, disps, intrinsics, ii, jj, stereo_rel_pose)
         target = coords1.clone()
 
         Gs_list, disp_list, residual_list = [], [], []
@@ -211,7 +211,7 @@ class DroidNet(nn.Module):
             for i in range(2):
                 Gs, disps = BA(target, weight, eta, Gs, disps, intrinsics, ii, jj, fixedp=2)
 
-            coords1, valid_mask = pops.projective_transform(Gs, disps, intrinsics, ii, jj)
+            coords1, valid_mask = pops.projective_transform(Gs, disps, intrinsics, ii, jj, stereo_rel_pose)
             residual = (target - coords1)
 
             Gs_list.append(Gs)

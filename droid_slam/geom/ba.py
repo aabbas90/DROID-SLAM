@@ -25,10 +25,11 @@ def disp_retr(disps, dz, ii):
 # apply retraction operator to poses
 def pose_retr(poses, dx, ii):
     ii = ii.to(device=dx.device)
-    return poses.retr(scatter_sum(dx, ii, dim=1, dim_size=poses.shape[1]))
+    oper = scatter_sum(dx, ii, dim=1, dim_size=poses.shape[1])
+    return poses.retr(oper)
 
 
-def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
+def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, stereo_rel_pose, fixedp=1, rig=1, rcm_regularizer_strength=0.0):
     """ Full Bundle Adjustment """
 
     B, P, ht, wd = disps.shape
@@ -37,14 +38,15 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
 
     ### 1: commpute jacobians and residuals ###
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
-        poses, disps, intrinsics, ii, jj, jacobian=True)
-
+        poses, disps, intrinsics, ii, jj, stereo_rel_pose, jacobian=True)
+    
     r = (target - coords).view(B, N, -1, 1)
     w = .001 * (valid * weight).view(B, N, -1, 1)
 
     ### 2: construct linear system ###
     Ji = Ji.reshape(B, N, -1, D)
     Jj = Jj.reshape(B, N, -1, D)
+
     wJiT = (w * Ji).transpose(2,3)
     wJjT = (w * Jj).transpose(2,3)
 
@@ -94,19 +96,27 @@ def BA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
     E = E.view(B, P, M, D, ht*wd)
 
     ### 3: solve the system ###
+    if rcm_regularizer_strength > 0.0:
+        regularization = torch.zeros_like(H)
+        regularization[:, :, :, :2, :2] = rcm_regularizer_strength * torch.eye(2).unsqueeze(0).unsqueeze(0).repeat(B, P, P, 1, 1)
+        H = H + regularization
+
+        # Modify v to include regularization term
+        v_reg = torch.zeros_like(v)
+        v_reg[:, :, :2] = -rcm_regularizer_strength * poses.data[:, fixedp:, :2].view(B, P, 2)
+        v = v + v_reg.view(B, P, D)
+
+
     dx, dz = schur_solve(H, E, C, v, w)
     
     ### 4: apply retraction ###
     poses = pose_retr(poses, dx, torch.arange(P) + fixedp)
     disps = disp_retr(disps, dz.view(B,-1,ht,wd), kx)
-
-    disps = torch.where(disps > 10, torch.zeros_like(disps), disps)
-    disps = disps.clamp(min=0.0)
-
+    
     return poses, disps
 
 
-def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1):
+def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, stereo_rel_pose, fixedp=1, rig=1, rcm_regularizer_strength=0.0):
     """ Motion only bundle adjustment """
 
     B, P, ht, wd = disps.shape
@@ -115,7 +125,7 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
 
     ### 1: commpute jacobians and residuals ###
     coords, valid, (Ji, Jj, Jz) = pops.projective_transform(
-        poses, disps, intrinsics, ii, jj, jacobian=True)
+        poses, disps, intrinsics, ii, jj, stereo_rel_pose, jacobian=True, optimize_tx_ty=True)
 
     r = (target - coords).view(B, N, -1, 1)
     w = .001 * (valid * weight).view(B, N, -1, 1)
@@ -148,6 +158,15 @@ def MoBA(target, weight, eta, poses, disps, intrinsics, ii, jj, fixedp=1, rig=1)
         safe_scatter_add_vec(vj, jj, P)
     
     H = H.view(B, P, P, D, D)
+    if rcm_regularizer_strength > 0.0:
+        regularization = torch.zeros_like(H)
+        regularization[:, :, :, :2, :2] = rcm_regularizer_strength * torch.eye(2).unsqueeze(0).unsqueeze(0).repeat(B, P, P, 1, 1)
+        H = H + regularization
+
+        # Modify v to include regularization term
+        v_reg = torch.zeros_like(v)
+        v_reg[:, :, :2] = -rcm_regularizer_strength * poses.data[:, fixedp:, :2].view(B, P, 2)
+        v = v + v_reg.view(B, P, D)
 
     ### 3: solve the system ###
     dx = block_solve(H, v)

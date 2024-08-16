@@ -20,6 +20,7 @@ class DroidBackend:
         self.backend_thresh = args.backend_thresh
         self.backend_radius = args.backend_radius
         self.backend_nms = args.backend_nms
+        self.rcm_regularizer_strength = args.rcm_reg
         
     @torch.no_grad()
     def __call__(self, steps=12):
@@ -29,7 +30,8 @@ class DroidBackend:
         if not self.video.stereo and not torch.any(self.video.disps_sens):
              self.video.normalize()
 
-        graph = FactorGraph(self.video, self.update_op, corr_impl="alt", max_factors=16*t, upsample=self.upsample)
+        graph = FactorGraph(self.video, self.update_op, corr_impl="alt", max_factors=16*t, upsample=self.upsample,
+                            rcm_regularizer_strength=self.rcm_regularizer_strength)
 
         graph.add_proximity_factors(rad=self.backend_radius, 
                                     nms=self.backend_nms, 

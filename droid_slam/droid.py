@@ -39,7 +39,7 @@ class Droid:
             self.visualizer.start()
 
         # post processor - fill in poses for non-keyframes
-        self.traj_filler = PoseTrajectoryFiller(self.net, self.video)
+        self.traj_filler = PoseTrajectoryFiller(self.net, self.video, rcm_regularizer_strength=args.rcm_reg)
 
 
     def load_weights(self, weights):
@@ -58,12 +58,12 @@ class Droid:
         self.net.load_state_dict(state_dict)
         self.net.to("cuda:0").eval()
 
-    def track(self, tstamp, image, depth=None, intrinsics=None):
+    def track(self, tstamp, image, depth=None, intrinsics=None, stereo_rel_pose=None):
         """ main thread - update map """
 
         with torch.no_grad():
             # check there is enough motion
-            self.filterx.track(tstamp, image, depth, intrinsics)
+            self.filterx.track(tstamp, image, depth, intrinsics, stereo_rel_pose)
 
             # local bundle adjustment
             self.frontend()
@@ -74,6 +74,8 @@ class Droid:
     def terminate(self, stream=None):
         """ terminate the visualization process, return poses [t, q] """
 
+        # self.video.project_out_rcm()
+        
         del self.frontend
 
         torch.cuda.empty_cache()

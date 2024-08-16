@@ -6,10 +6,12 @@ import time
 import argparse
 import numpy as np
 import open3d as o3d
-
+o3d.utility.set_verbosity_level(o3d.utility.VerbosityLevel.Error)
 from lietorch import SE3
 import geom.projective_ops as pops
 
+z = -50
+twist = -30
 CAM_POINTS = np.array([
         [ 0,   0,   0],
         [-1,  -1, 1.5],
@@ -19,10 +21,13 @@ CAM_POINTS = np.array([
         [-0.5, 1, 1.5],
         [ 0.5, 1, 1.5],
         [ 0, 1.2, 1.5],
-        [0, 0, -100]])
+        [0, 0, z],
+        [0, z * np.sin(np.pi * twist / 180.0), z * np.cos(np.pi * twist / 180.0)]
+        # [z * np.sin(np.pi * 30 / 180.0), 0, z * np.cos(np.pi * 30 / 180.0)]
+        ])
 
 CAM_LINES = np.array([
-    [1,2], [2,3], [3,4], [4,1], [1,0], [0,2], [3,0], [0,4], [5,7], [7,6], [0, 8]])
+    [1,2], [2,3], [3,4], [4,1], [1,0], [0,2], [3,0], [0,4], [5,7], [7,6], [0, 9]])
 
 def white_balance(img):
     # from https://stackoverflow.com/questions/46390779/automatic-white-balancing-with-grayworld-assumption
@@ -40,6 +45,17 @@ def create_camera_actor(g, scale=0.05):
         points=o3d.utility.Vector3dVector(scale * CAM_POINTS),
         lines=o3d.utility.Vector2iVector(CAM_LINES))
 
+    color = (g * 1.0, 0.5 * (1-g), 0.9 * (1-g))
+    camera_actor.paint_uniform_color(color)
+    return camera_actor
+
+def create_rcm_actor(rcm):
+    rcm_points = np.concatenate((rcm, np.zeros_like(rcm)), 0)
+    camera_actor = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(rcm_points),
+        lines=o3d.utility.Vector2iVector(np.array([[0, 1]])))
+
+    g = 0.5
     color = (g * 1.0, 0.5 * (1-g), 0.9 * (1-g))
     camera_actor.paint_uniform_color(color)
     return camera_actor
@@ -91,7 +107,17 @@ def droid_visualization(video, device="cuda:0"):
 
             # convert poses to 4x4 matrix
             poses = torch.index_select(video.poses, 0, dirty_index)
-            # poses = pops.project_rcm(poses)
+            # try:
+            #     rcm = pops.find_rcm(poses).squeeze()
+            #     # poses_torch_rcm = pops.project_out_rcm(poses, rcm)
+            #     # poses_world = SE3(poses_torch_rcm).inv()
+            #     poses_world = SE3(poses).inv()
+            #     poses_world.data[:, :3] -= rcm.unsqueeze(0)
+            #     poses = poses_world.inv().data
+            # except:
+            #     poses = poses
+            #     print('Could not project out RCM.')
+
             disps = torch.index_select(video.disps, 0, dirty_index)
             Ps = SE3(poses).inv().matrix().cpu().numpy()
 
@@ -108,7 +134,6 @@ def droid_visualization(video, device="cuda:0"):
             disps = disps.cpu()
             masks = ((count >= 2) & (disps > .5*disps.mean(dim=[1,2], keepdim=True)))
             
-            lines = []
             for i in range(len(dirty_index)):
                 pose = Ps[i]
                 ix = dirty_index[i].item()
@@ -136,41 +161,21 @@ def droid_visualization(video, device="cuda:0"):
                 vis.add_geometry(point_actor)
                 droid_visualization.points[ix] = point_actor
 
-            # rcm = pops.find_rcm(poses).unsqueeze(0).unsqueeze(-1)
-            # PM = SE3(poses).matrix()
-            # PM_inv = SE3(poses).inv().matrix()
-
-            # original_centers = -torch.matmul(PM_inv[:, :3, :3], PM[:, :3, 3:4])
-            # new_centers = original_centers - rcm
-            # new_translation = -torch.matmul(PM[:, :3, :3], new_centers)
-            # # print(f'new_translation: {new_translation.shape} \n {new_translation}')
-            # # set x and y translation to 0.
-            # # new_translation[:, :2, :] = 0
-
-            # PM[:, :3, 3:4] = -torch.matmul(PM[:, :3, :3], -torch.matmul(PM_inv[:, :3, :3], new_translation) + rcm)
-            # # PM[:, :3, 3:4] = new_translation
-            # Ps_rcm = torch.linalg.inv(PM)
+            # poses_rcm = pops.project_out_rcm(poses)
+            # Ps = SE3(poses_rcm).inv().matrix().cpu().numpy()            
             # for i in range(len(dirty_index)):
-            #     pose = Ps_rcm[i]
-            #     ix = f'{dirty_index[i].item()}_rcm'
-
-            #     if ix in droid_visualization.cameras:
-            #         vis.remove_geometry(droid_visualization.cameras[ix])
-            #         del droid_visualization.cameras[ix]
+            #     pose = Ps[i]
+            #     ix = dirty_index[i].item()
+            #     ix_key = f'{ix}_rcm'
+            #     if ix_key in droid_visualization.cameras:
+            #         vis.remove_geometry(droid_visualization.cameras[ix_key])
+            #         del droid_visualization.cameras[ix_key]
 
             #     ### add camera actor ###
             #     cam_actor = create_camera_actor(False)
-            #     cam_actor.transform(pose.cpu().numpy())
+            #     cam_actor.transform(pose)
             #     vis.add_geometry(cam_actor)
-            #     droid_visualization.cameras[ix] = cam_actor
-
-            # if 'rcm' in droid_visualization.cameras:
-            #     vis.remove_geometry(droid_visualization.cameras['rcm'])
-            #     del droid_visualization.cameras['rcm']
-
-            # rcm_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(rcm.squeeze().cpu().numpy()[None, :]))
-            # vis.add_geometry(rcm_pcd)
-            # droid_visualization.cameras['rcm'] = rcm_pcd
+            #     droid_visualization.cameras[ix_key] = cam_actor
 
             # hack to allow interacting with vizualization during inference
             if len(droid_visualization.cameras) >= droid_visualization.warmup:

@@ -3,13 +3,11 @@
 
 // CUDA forward declarations
 std::vector<torch::Tensor> projective_transform_cuda(
-  torch::Tensor poses,
-  torch::Tensor disps,
-  torch::Tensor intrinsics,
-  torch::Tensor ii,
-  torch::Tensor jj);
-
-
+    torch::Tensor poses,
+    torch::Tensor disps,
+    torch::Tensor intrinsics,
+    torch::Tensor ii,
+    torch::Tensor jj);
 
 torch::Tensor depth_filter_cuda(
     torch::Tensor poses,
@@ -18,31 +16,31 @@ torch::Tensor depth_filter_cuda(
     torch::Tensor ix,
     torch::Tensor thresh);
 
-
 torch::Tensor frame_distance_cuda(
-  torch::Tensor poses,
-  torch::Tensor disps,
-  torch::Tensor intrinsics,
-  torch::Tensor ii,
-  torch::Tensor jj,
-  const float beta);
+    torch::Tensor poses,
+    torch::Tensor disps,
+    torch::Tensor intrinsics,
+    torch::Tensor ii,
+    torch::Tensor jj,
+    const float beta);
 
 std::vector<torch::Tensor> projmap_cuda(
-  torch::Tensor poses,
-  torch::Tensor disps,
-  torch::Tensor intrinsics,
-  torch::Tensor ii,
-  torch::Tensor jj);
+    torch::Tensor poses,
+    torch::Tensor disps,
+    torch::Tensor intrinsics,
+    torch::Tensor ii,
+    torch::Tensor jj);
 
 torch::Tensor iproj_cuda(
-  torch::Tensor poses,
-  torch::Tensor disps,
-  torch::Tensor intrinsics);
+    torch::Tensor poses,
+    torch::Tensor disps,
+    torch::Tensor intrinsics);
 
 std::vector<torch::Tensor> ba_cuda(
     torch::Tensor poses,
     torch::Tensor disps,
     torch::Tensor intrinsics,
+    torch::Tensor stereo_rel_pose,
     torch::Tensor disps_sens,
     torch::Tensor targets,
     torch::Tensor weights,
@@ -54,41 +52,41 @@ std::vector<torch::Tensor> ba_cuda(
     const int iterations,
     const float lm,
     const float ep,
-    const bool motion_only);
+    const bool motion_only,
+    const bool optimize_tx_ty);
 
 std::vector<torch::Tensor> corr_index_cuda_forward(
-  torch::Tensor volume,
-  torch::Tensor coords,
-  int radius);
+    torch::Tensor volume,
+    torch::Tensor coords,
+    int radius);
 
 std::vector<torch::Tensor> corr_index_cuda_backward(
-  torch::Tensor volume,
-  torch::Tensor coords,
-  torch::Tensor corr_grad,
-  int radius);
+    torch::Tensor volume,
+    torch::Tensor coords,
+    torch::Tensor corr_grad,
+    int radius);
 
 std::vector<torch::Tensor> altcorr_cuda_forward(
-  torch::Tensor fmap1,
-  torch::Tensor fmap2,
-  torch::Tensor coords,
-  int radius);
+    torch::Tensor fmap1,
+    torch::Tensor fmap2,
+    torch::Tensor coords,
+    int radius);
 
 std::vector<torch::Tensor> altcorr_cuda_backward(
-  torch::Tensor fmap1,
-  torch::Tensor fmap2,
-  torch::Tensor coords,
-  torch::Tensor corr_grad,
-  int radius);
-
+    torch::Tensor fmap1,
+    torch::Tensor fmap2,
+    torch::Tensor coords,
+    torch::Tensor corr_grad,
+    int radius);
 
 #define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
 #define CHECK_INPUT(x) CHECK_CONTIGUOUS(x)
-
 
 std::vector<torch::Tensor> ba(
     torch::Tensor poses,
     torch::Tensor disps,
     torch::Tensor intrinsics,
+    torch::Tensor stereo_rel_pose,
     torch::Tensor disps_sens,
     torch::Tensor targets,
     torch::Tensor weights,
@@ -100,22 +98,23 @@ std::vector<torch::Tensor> ba(
     const int iterations,
     const float lm,
     const float ep,
-    const bool motion_only) {
+    const bool motion_only,
+    const bool optimize_tx_ty)
+{
 
   CHECK_INPUT(targets);
   CHECK_INPUT(weights);
   CHECK_INPUT(poses);
   CHECK_INPUT(disps);
   CHECK_INPUT(intrinsics);
+  CHECK_INPUT(stereo_rel_pose);
   CHECK_INPUT(disps_sens);
   CHECK_INPUT(ii);
   CHECK_INPUT(jj);
 
-  return ba_cuda(poses, disps, intrinsics, disps_sens, targets, weights,
-                 eta, ii, jj, t0, t1, iterations, lm, ep, motion_only);
-
+  return ba_cuda(poses, disps, intrinsics, stereo_rel_pose, disps_sens, targets, weights,
+                 eta, ii, jj, t0, t1, iterations, lm, ep, motion_only, optimize_tx_ty);
 }
-
 
 torch::Tensor frame_distance(
     torch::Tensor poses,
@@ -123,7 +122,8 @@ torch::Tensor frame_distance(
     torch::Tensor intrinsics,
     torch::Tensor ii,
     torch::Tensor jj,
-    const float beta) {
+    const float beta)
+{
 
   CHECK_INPUT(poses);
   CHECK_INPUT(disps);
@@ -132,16 +132,15 @@ torch::Tensor frame_distance(
   CHECK_INPUT(jj);
 
   return frame_distance_cuda(poses, disps, intrinsics, ii, jj, beta);
-
 }
-
 
 std::vector<torch::Tensor> projmap(
     torch::Tensor poses,
     torch::Tensor disps,
     torch::Tensor intrinsics,
     torch::Tensor ii,
-    torch::Tensor jj) {
+    torch::Tensor jj)
+{
 
   CHECK_INPUT(poses);
   CHECK_INPUT(disps);
@@ -150,14 +149,13 @@ std::vector<torch::Tensor> projmap(
   CHECK_INPUT(jj);
 
   return projmap_cuda(poses, disps, intrinsics, ii, jj);
-
 }
-
 
 torch::Tensor iproj(
     torch::Tensor poses,
     torch::Tensor disps,
-    torch::Tensor intrinsics) {
+    torch::Tensor intrinsics)
+{
   CHECK_INPUT(poses);
   CHECK_INPUT(disps);
   CHECK_INPUT(intrinsics);
@@ -165,12 +163,12 @@ torch::Tensor iproj(
   return iproj_cuda(poses, disps, intrinsics);
 }
 
-
 // c++ python binding
 std::vector<torch::Tensor> corr_index_forward(
     torch::Tensor volume,
     torch::Tensor coords,
-    int radius) {
+    int radius)
+{
   CHECK_INPUT(volume);
   CHECK_INPUT(coords);
 
@@ -181,7 +179,8 @@ std::vector<torch::Tensor> corr_index_backward(
     torch::Tensor volume,
     torch::Tensor coords,
     torch::Tensor corr_grad,
-    int radius) {
+    int radius)
+{
   CHECK_INPUT(volume);
   CHECK_INPUT(coords);
   CHECK_INPUT(corr_grad);
@@ -194,7 +193,8 @@ std::vector<torch::Tensor> altcorr_forward(
     torch::Tensor fmap1,
     torch::Tensor fmap2,
     torch::Tensor coords,
-    int radius) {
+    int radius)
+{
   CHECK_INPUT(fmap1);
   CHECK_INPUT(fmap2);
   CHECK_INPUT(coords);
@@ -207,7 +207,8 @@ std::vector<torch::Tensor> altcorr_backward(
     torch::Tensor fmap2,
     torch::Tensor coords,
     torch::Tensor corr_grad,
-    int radius) {
+    int radius)
+{
   CHECK_INPUT(fmap1);
   CHECK_INPUT(fmap2);
   CHECK_INPUT(coords);
@@ -216,25 +217,25 @@ std::vector<torch::Tensor> altcorr_backward(
   return altcorr_cuda_backward(fmap1, fmap2, coords, corr_grad, radius);
 }
 
-
 torch::Tensor depth_filter(
     torch::Tensor poses,
     torch::Tensor disps,
     torch::Tensor intrinsics,
     torch::Tensor ix,
-    torch::Tensor thresh) {
+    torch::Tensor thresh)
+{
 
-    CHECK_INPUT(poses);
-    CHECK_INPUT(disps);
-    CHECK_INPUT(intrinsics);
-    CHECK_INPUT(ix);
-    CHECK_INPUT(thresh);
+  CHECK_INPUT(poses);
+  CHECK_INPUT(disps);
+  CHECK_INPUT(intrinsics);
+  CHECK_INPUT(ix);
+  CHECK_INPUT(thresh);
 
-    return depth_filter_cuda(poses, disps, intrinsics, ix, thresh);
+  return depth_filter_cuda(poses, disps, intrinsics, ix, thresh);
 }
 
-
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
+{
   // bundle adjustment kernels
   m.def("ba", &ba, "bundle adjustment");
   m.def("frame_distance", &frame_distance, "frame_distance");

@@ -194,6 +194,7 @@ __global__ void projective_transform_kernel(
     const torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> poses,
     const torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> disps,
     const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> intrinsics,
+    const torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> stereo_rel_pose,
     const torch::PackedTensorAccessor32<long, 1, torch::RestrictPtrTraits> ii,
     const torch::PackedTensorAccessor32<long, 1, torch::RestrictPtrTraits> jj,
     torch::PackedTensorAccessor32<float, 4, torch::RestrictPtrTraits> Hs,
@@ -201,7 +202,8 @@ __global__ void projective_transform_kernel(
     torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> Eii,
     torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> Eij,
     torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> Cii,
-    torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> bz)
+    torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> bz,
+    const bool optimize_tx_ty)
 {
   const int block_id = blockIdx.x;
   const int thread_id = threadIdx.x;
@@ -236,13 +238,13 @@ __global__ void projective_transform_kernel(
   {
     if (thread_id == 0)
     {
-      tij[0] = -0.1;
-      tij[1] = 0;
-      tij[2] = 0;
-      qij[0] = 0;
-      qij[1] = 0;
-      qij[2] = 0;
-      qij[3] = 1;
+      tij[0] = stereo_rel_pose[0];
+      tij[1] = stereo_rel_pose[1];
+      tij[2] = stereo_rel_pose[2];
+      qij[0] = stereo_rel_pose[3];
+      qij[1] = stereo_rel_pose[4];
+      qij[2] = stereo_rel_pose[5];
+      qij[3] = stereo_rel_pose[6];
     }
   }
 
@@ -334,8 +336,16 @@ __global__ void projective_transform_kernel(
 
     // x - coordinate
 
-    Jj[0] = fx * (h * d);
-    Jj[1] = fx * 0;
+    if (optimize_tx_ty)
+    {
+      Jj[0] = fx * (h * d);
+      Jj[1] = fx * 0;
+    }
+    else
+    {
+      Jj[0] = 0;
+      Jj[1] = 0;
+    }
     Jj[2] = fx * (-x * h * d2);
     Jj[3] = fx * (-x * y * d2);
     Jj[4] = fx * (1 + x * x * d2);
@@ -349,6 +359,11 @@ __global__ void projective_transform_kernel(
       wu = 0;
 
     adjSE3(tij, qij, Jj, Ji);
+    if (!optimize_tx_ty)
+    {
+      Ji[0] = 0;
+      Ji[1] = 0;
+    }
     for (int n = 0; n < 6; n++)
       Ji[n] *= -1;
 
@@ -371,8 +386,16 @@ __global__ void projective_transform_kernel(
       Eij[block_id][n][k] = wu * Jz * Jj[n];
     }
 
-    Jj[0] = fy * 0;
-    Jj[1] = fy * (h * d);
+    if (optimize_tx_ty)
+    {
+      Jj[0] = fy * 0;
+      Jj[1] = fy * (h * d);
+    }
+    else
+    {
+      Jj[0] = 0;
+      Jj[1] = 0;
+    }
     Jj[2] = fy * (-y * h * d2);
     Jj[3] = fy * (-1 - y * y * d2);
     Jj[4] = fy * (x * y * d2);
@@ -386,6 +409,11 @@ __global__ void projective_transform_kernel(
       wv = 0;
 
     adjSE3(tij, qij, Jj, Ji);
+    if (!optimize_tx_ty)
+    {
+      Ji[0] = 0;
+      Ji[1] = 0;
+    }
     for (int n = 0; n < 6; n++)
       Ji[n] *= -1;
 
@@ -1420,6 +1448,7 @@ std::vector<torch::Tensor> ba_cuda(
     torch::Tensor poses,
     torch::Tensor disps,
     torch::Tensor intrinsics,
+    torch::Tensor stereo_rel_pose,
     torch::Tensor disps_sens,
     torch::Tensor targets,
     torch::Tensor weights,
@@ -1431,7 +1460,8 @@ std::vector<torch::Tensor> ba_cuda(
     const int iterations,
     const float lm,
     const float ep,
-    const bool motion_only)
+    const bool motion_only,
+    const bool optimize_tx_ty)
 {
   auto opts = poses.options();
   const int num = ii.size(0);
@@ -1468,6 +1498,7 @@ std::vector<torch::Tensor> ba_cuda(
         poses.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
         disps.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
         intrinsics.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+        stereo_rel_pose.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
         ii.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
         jj.packed_accessor32<long, 1, torch::RestrictPtrTraits>(),
         Hs.packed_accessor32<float, 4, torch::RestrictPtrTraits>(),
@@ -1475,7 +1506,8 @@ std::vector<torch::Tensor> ba_cuda(
         Eii.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
         Eij.packed_accessor32<float, 3, torch::RestrictPtrTraits>(),
         Cii.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
-        wi.packed_accessor32<float, 2, torch::RestrictPtrTraits>());
+        wi.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
+        optimize_tx_ty);
 
     // pose x pose block
     SparseBlock A(t1 - t0, 6);

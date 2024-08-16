@@ -8,6 +8,9 @@ from collections import OrderedDict
 
 from droid_net import cvx_upsample
 import geom.projective_ops as pops
+import geom.ba as bapy
+import os
+from lietorch import SE3
 
 class DepthVideo:
     def __init__(self, image_size=[480, 640], buffer=1024, stereo=False, device="cuda:0"):
@@ -39,7 +42,12 @@ class DepthVideo:
 
         # initialize poses to identity transformation
         self.poses[:] = torch.as_tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float, device="cuda")
-        
+        if 'RCM' in os.environ:
+            print('depth_video.py: Initializing with RCM. ')
+            self.poses[:, 2] = -3 # -1.10 # -3.13
+        self.stereo_rel_pose = torch.zeros(buffer, 7, device="cuda", dtype=torch.float).share_memory_()
+        self.stereo_rel_pose[:] = torch.as_tensor([-0.1, 0, 0, 0, 0, 0, 1.0], dtype=torch.float, device="cuda")
+
     def get_lock(self):
         return self.counter.get_lock()
 
@@ -75,6 +83,10 @@ class DepthVideo:
 
         if len(item) > 8:
             self.inps[index] = item[8]
+
+        if len(item) > 9:
+            if item[9] is not None:
+                self.stereo_rel_pose[index] = item[9]
 
     def __setitem__(self, index, item):
         with self.get_lock():
@@ -128,7 +140,6 @@ class DepthVideo:
 
     def normalize(self):
         """ normalize depth and poses """
-
         with self.get_lock():
             s = self.disps[:self.counter.value].mean()
             self.disps[:self.counter.value] /= s
@@ -142,7 +153,7 @@ class DepthVideo:
         Gs = lietorch.SE3(self.poses[None])
 
         coords, valid_mask = \
-            pops.projective_transform(Gs, self.disps[None], self.intrinsics[None], ii, jj)
+            pops.projective_transform(Gs, self.disps[None], self.intrinsics[None], ii, jj, self.stereo_rel_pose[0])
 
         return coords, valid_mask
 
@@ -177,8 +188,17 @@ class DepthVideo:
             return d.reshape(N, N)
 
         return d
+    
+    def project_out_rcm(self):
+        from lietorch import SE3
+        poses_torch = self.poses[:, :self.counter.value]
+        rcm = pops.find_rcm(poses_torch).squeeze()
+        poses_torch_rcm = pops.project_out_rcm(poses_torch, rcm)
+        poses_world = SE3(poses_torch_rcm).inv()
+        poses_world.data[:, :3] -= rcm.unsqueeze(0)
+        self.poses[:, :self.counter.value] = poses_world.inv().data
 
-    def ba(self, target, weight, eta, ii, jj, t0=1, t1=None, itrs=2, lm=1e-4, ep=0.1, motion_only=False):
+    def ba(self, target, weight, eta, ii, jj, t0=1, t1=None, itrs=2, lm=1e-4, ep=0.1, motion_only=False, rcm_regularizer_strength=0.0):
         """ dense bundle adjustment (DBA) """
 
         with self.get_lock():
@@ -187,7 +207,47 @@ class DepthVideo:
             if t1 is None:
                 t1 = max(ii.max().item(), jj.max().item()) + 1
 
-            droid_backends.ba(self.poses, self.disps, self.intrinsics[0], self.disps_sens,
-                target, weight, eta, ii, jj, t0, t1, itrs, lm, ep, motion_only)
+            # poses_py = SE3(self.poses.unsqueeze(0))[:, :t1]
+            # depths_py = self.disps.clone().unsqueeze(0)[:, :t1]
+            # intrinsics_py = self.intrinsics.clone().unsqueeze(0)[:, :t1]
+            # target_py = torch.movedim(target.clone().unsqueeze(0), 2, -1).contiguous()
+            # weight_py = torch.movedim(weight.clone().unsqueeze(0), 2, -1).contiguous()
+            # for itr in range(itrs):
+            #     if not motion_only:
+            #         poses_py, depths_py = bapy.BA(target_py, weight_py, eta, poses_py, depths_py, intrinsics_py, ii, jj, stereo_rel_pose=self.stereo_rel_pose[0], fixedp=t0, rig=1, rcm_regularizer_strength=rcm_regularizer_strength)
+            #     else:
+            #         poses_py = bapy.MoBA(target_py, weight_py, eta, poses_py, depths_py, intrinsics_py, ii, jj, stereo_rel_pose=self.stereo_rel_pose[0], fixedp=t0, rig=1, rcm_regularizer_strength=rcm_regularizer_strength)
+
+            # depths_py = depths_py.squeeze(0)
+            # poses_py = poses_py.data.squeeze(0)
+            # self.poses[:t1] = poses_py[:t1]
+            # self.disps[:t1] = depths_py[:t1] 
+
+            dx, dz = droid_backends.ba(self.poses, self.disps, self.intrinsics[0], self.stereo_rel_pose[0], self.disps_sens,
+                target, weight, eta, ii, jj, t0, t1, itrs, lm, ep, motion_only, True)
+
+            # # diff = self.poses - prev_poses
+            # tx_var = torch.var(self.poses[:t1, 0])
+            # ty_var = torch.var(self.poses[:t1, 1])
+            # tz_var = torch.var(self.poses[:t1, 2])
+            # print(f'tx_var: {tx_var:.4f}, ty_var: {ty_var:.4f}, tz_var: {tz_var:.4f}')
 
             self.disps.clamp_(min=0.001)
+            # if self.counter.value > 20:
+            #     poses_torch = self.poses[:self.counter.value]
+            #     rcm = pops.find_rcm(poses_torch).squeeze()
+            #     poses_torch_rcm = pops.project_out_rcm(poses_torch, rcm)
+            #     poses_world = SE3(poses_torch_rcm).inv()
+            #     poses_world.data[:, :3] -= rcm.unsqueeze(0)
+            #     self.poses[:self.counter.value] = poses_world.inv().data
+            #     print(f'projected RCM @ {rcm}')
+            # print(poses_new.data[:, :3])
+
+            # warmup_buffer = 20
+            # ignore_last = 10
+            # rcm_on_atleast = 10
+            # if self.counter.value > warmup_buffer + rcm_on_atleast + ignore_last:
+            #     end_frame = self.counter.value - ignore_last
+            #     start_frame = end_frame - rcm_on_atleast
+            #     rcm = pops.find_rcm(self.poses[:warmup_buffer]).unsqueeze(0).unsqueeze(-1)
+            #     self.poses[: -ignore_last] = pops.project_out_rcm(self.poses[: -ignore_last], rcm)

@@ -12,12 +12,13 @@ import geom.projective_ops as pops
 class PoseTrajectoryFiller:
     """ This class is used to fill in non-keyframe poses """
 
-    def __init__(self, net, video, device="cuda:0"):
+    def __init__(self, net, video, device="cuda:0", rcm_regularizer_strength=0.0):
         
         # split net modules
         self.cnet = net.cnet
         self.fnet = net.fnet
         self.update = net.update
+        self.rcm_regularizer_strength = rcm_regularizer_strength
 
         self.count = 0
         self.video = video
@@ -64,7 +65,7 @@ class PoseTrajectoryFiller:
         self.video.counter.value += M
         self.video[N:N+M] = (tt, images[:,0], Gs.data, 1, None, intrinsics / 8.0, fmap)
 
-        graph = FactorGraph(self.video, self.update)
+        graph = FactorGraph(self.video, self.update, rcm_regularizer_strength=self.rcm_regularizer_strength)
         graph.add_factors(t0.cuda(), torch.arange(N, N+M).cuda())
         graph.add_factors(t1.cuda(), torch.arange(N, N+M).cuda())
 
@@ -87,7 +88,7 @@ class PoseTrajectoryFiller:
         images = []
         intrinsics = []
         
-        for (tstamp, image, intrinsic) in image_stream:
+        for (tstamp, image, intrinsic, depth) in image_stream:
             tstamps.append(tstamp)
             images.append(image)
             intrinsics.append(intrinsic)
